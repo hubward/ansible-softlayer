@@ -281,7 +281,7 @@ class VSInstanceConfig(object):
         else: self.payment_scheme = VSPaymentScheme.MONTHLY()
         self.dedicated = sl_data.get("dedicatedAccountHostOnlyFlag", False)
         self.datacenter = sl_data["datacenter"]["name"]
-        self.os_code = sl_data["softwareLicense"]["softwareDescription"]["referenceCode"]
+        self.os_code = sl_data["operatingSystem"]["softwareLicense"]["softwareDescription"]["referenceCode"]
         self.private = sl_data.get("privateNetworkOnlyFlag", False)
         self.post_install_script = sl_data.get("post_uri", None)
         self.root_ssh_keys = None
