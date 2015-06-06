@@ -447,8 +447,7 @@ class SoftlayerVirtualServer(object):
             sync_instance_config.datacenter != self._ic.datacenter or \
             sync_instance_config.os_code != self._ic.os_code or \
             sync_instance_config.payment_scheme != self._ic.payment_scheme or \
-            sync_instance_config.private != self._ic.private or \
-            sync_instance_config.nic_speed != self._ic.nic_speed
+            sync_instance_config.private != self._ic.private
             
         if changed:
             self.cancel()
