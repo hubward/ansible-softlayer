@@ -448,8 +448,7 @@ class SoftlayerVirtualServer(object):
             sync_instance_config.os_code != self._ic.os_code or \
             sync_instance_config.payment_scheme != self._ic.payment_scheme or \
             sync_instance_config.private != self._ic.private or \
-            sync_instance_config.nic_speed != self._ic.nic_speed
-            
+                        
         if changed:
             self.cancel()
             self.create()
@@ -462,8 +461,18 @@ class SoftlayerVirtualServer(object):
         if changed:
             self._sl_vs_manager.upgrade(instance_id=self.get_vs_id(),
                                         cpus=self._ic.CPUs,
-                                        memory=RAM.to_sl(self._ic.RAM),
-                                        nic_speed=NICSpeed.to_sl(self._ic.nic_speed))
+                                        memory=RAM.to_sl(self._ic.RAM))
+        
+        nic_speed_chanaged = sync_instance_config.nic_speed != self._ic.nic_speed
+        if nic_speed_changed:
+           self._sl_vs_manager.change_port_speed(instance_id=self.get_vs_id(),
+                                                 public=False,
+                                                 speed=NICSpeed.to_sl(self._ic.nic_speed))
+           if self._ic.private:
+               self._sl_vs_manager.change_port_speed(instance_id=self.get_vs_id(),
+                                                     public=True,
+                                                     speed=NICSpeed.to_sl(self._ic.nic_speed))
+        changed = changed or nic_speed_changed
         self._wait_for_ready()
         return changed
     
