@@ -354,19 +354,14 @@ class SoftlayerVirtualServer(object):
             return False
         changed = actionPerformed != self._nothing
         changed |= self._handleSettingsRequiringInstanceRecreation(sync_instance_config)
-        print changed
         if changed:
             return True 
         changed |= self._handleUpgradableSettings(sync_instance_config)
-        print changed
         changed |= self._handleSettingsRequiringOsReload(sync_instance_config)
-        print changed
         return changed
     
     def _handleState(self, sync_instance_config):
-        print "entered _handleState"
         if sync_instance_config.state == self._ic.state:
-            print "nothing"
             return self._nothing
         if self._ic.state == VSState.RUNNING() and \
             sync_instance_config.state == VSState.ABSENT():
@@ -374,7 +369,6 @@ class SoftlayerVirtualServer(object):
             return self._create
         if self._ic.state == VSState.RUNNING() and \
             sync_instance_config.state == VSState.PRESENT():
-            print "power_on"
             self.power_on()
             return self._start
         if self._ic.state == VSState.PRESENT() and \
@@ -387,16 +381,14 @@ class SoftlayerVirtualServer(object):
             self.power_off()
             return self._stop
         if self._ic.state == VSState.ABSENT():
-            print "cancel"
             self.cancel()
             return self._cancel
-        print "return no result"
     
     def create(self):
         try: 
             ssh_key_ids = self._key_ids()
         except SSHKeyException as ssh_key_exception:
-            raise VSException(false, ssh_key_exception.msg())
+            raise VSException(False, ssh_key_exception.msg())
         
         self._sl_vs_manager.create_instance(
             cpus = self._ic.CPUs,
@@ -494,7 +486,7 @@ class SoftlayerVirtualServer(object):
         for key_label in self._ic.root_ssh_keys:
             found_label = self._single_result(self._sl_ssh_keys_manager.list_keys(label=key_label))
             if found_label is None:
-                raise SSHKeyExeption("SSH Key with label {} not found".format(key_label))
+                raise SSHKeyException("SSH Key with label {} not found".format(key_label))
             key_ids.append(found_label["id"])
         return key_ids
             
