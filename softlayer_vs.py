@@ -78,6 +78,16 @@ options:
             - Changing the value causes OS reload.
         type: string
         default: null
+    
+    user_data:
+        description:
+            - User provided data that will be accessible from the system. Could be used to
+            - pass parameters to the post install script. Data is accessible by
+            - mounting /dev/xvdh1. Path to raw data is openstack/latest/user_data.
+            - Ff changed, OS reload would be triggered
+        type: string
+        default: null
+    
     root_ssh_keys:
         description:
             - List of SSH keys to be installed for the root.
@@ -267,6 +277,11 @@ class VSInstanceConfig(object):
         self.post_install_script = ansible_config.get("post_install_script")
         if self.post_install_script == "":
             self.post_install_script = None
+        if ansible_config.get("user_data") == "" \
+            or ansible_config.get("user_data") is None:
+            self.user_data = None
+        else:
+            self.user_data = ansible_config.get("user_data")
         self.root_ssh_keys = ansible_config.get("root_ssh_keys")
         self.nic_speed = ansible_config.get("nic_speed")
         self.CPUs = ansible_config.get("CPUs")
@@ -296,7 +311,7 @@ class VSInstanceConfig(object):
         if sl_power_state == "HALTED":
             return VSState.PRESENT()
         # HALTED is also used during some of the transactions, when the host
-        # is powerd down.
+        # is powered down.
         assert sl_power_state == "RUNNING" or sl_power_state == "HALTED"
     
     def _read_nic_speed_from_sl(self, sl_data):
@@ -322,6 +337,7 @@ class VSInstanceConfig(object):
             os_code = dict(type='str', required=True),
             private = dict(type='bool', default=True),
             post_install_script = dict(type='str'),
+            user_data = dict(type='str'),
             root_ssh_keys = dict(type='list'),
             nic_speed = dict(type='str', default = NICSpeed.Mb100(), choices = [NICSpeed.Mb100(), NICSpeed.Mb10(), NICSpeed.Gb1()]),
             CPUs = dict(type='int', default = CPUs.CPUs1(), choices = [CPUs.CPUs1(), CPUs.CPUs2(), CPUs.CPUs4()]),
@@ -390,7 +406,7 @@ class SoftlayerVirtualServer(object):
         except SSHKeyException as ssh_key_exception:
             raise VSException(False, ssh_key_exception.msg())
         
-        self._sl_vs_manager.create_instance(
+        create_params = self._generate_create_dict(
             cpus = self._ic.CPUs,
             memory = RAM.to_sl(self._ic.RAM),
             hourly = VSPaymentScheme.to_sl(self._ic.payment_scheme),
@@ -403,9 +419,95 @@ class SoftlayerVirtualServer(object):
             private = self._ic.private,
             post_uri = self._ic.post_install_script,
             ssh_keys = ssh_key_ids,
-            nic_speed = NICSpeed.to_sl(self._ic.nic_speed)
+            nic_speed = NICSpeed.to_sl(self._ic.nic_speed),
+            user_data = self._ic.user_data
         )
+        self._sl_virtual_guest.createObject(create_params)
         self._wait_for_ready()
+        
+    def _generate_create_dict(
+            self, cpus=None, memory=None, hourly=True,
+            hostname=None, domain=None, local_disk=True,
+            datacenter=None, os_code=None, image_id=None,
+            dedicated=False, public_vlan=None, private_vlan=None,
+            nic_speed=None, user_data=None, disks=None, post_uri=None,
+            private=False, ssh_keys=None):
+        """Returns a dict appropriate to pass into Virtual_Guest::createObject
+            See :func:`create_instance` for a list of available options.
+        """
+        required = [cpus, memory, hostname, domain]
+
+        mutually_exclusive = [
+            {'os_code': os_code, "image_id": image_id},
+        ]
+
+        if not all(required):
+            raise ValueError("cpu, memory, hostname, and domain are required")
+
+        for mu_ex in mutually_exclusive:
+            if all(mu_ex.values()):
+                raise ValueError(
+                    'Can only specify one of: %s' % (','.join(mu_ex.keys())))
+
+        data = {
+            "startCpus": int(cpus),
+            "maxMemory": int(memory),
+            "hostname": hostname,
+            "domain": domain,
+            "localDiskFlag": local_disk,
+        }
+
+        data["hourlyBillingFlag"] = hourly
+
+        if dedicated:
+            data["dedicatedAccountHostOnlyFlag"] = dedicated
+
+        if private:
+            data['privateNetworkOnlyFlag'] = private
+
+        if image_id:
+            data["blockDeviceTemplateGroup"] = {"globalIdentifier": image_id}
+        elif os_code:
+            data["operatingSystemReferenceCode"] = os_code
+
+        if datacenter:
+            data["datacenter"] = {"name": datacenter}
+
+        if public_vlan:
+            data.update({
+                'primaryNetworkComponent': {
+                    "networkVlan": {"id": int(public_vlan)}}})
+        if private_vlan:
+            data.update({
+                "primaryBackendNetworkComponent": {
+                    "networkVlan": {"id": int(private_vlan)}}})
+
+        if user_data:
+            data['userData'] = [{'value': user_data}]
+
+        if nic_speed:
+            data['networkComponents'] = [{'maxSpeed': nic_speed}]
+
+        if disks:
+            data['blockDevices'] = [
+                {"device": "0", "diskImage": {"capacity": disks[0]}}
+            ]
+
+            for dev_id, disk in enumerate(disks[1:], start=2):
+                data['blockDevices'].append(
+                    {
+                        "device": str(dev_id),
+                        "diskImage": {"capacity": disk}
+                    }
+                )
+
+        if post_uri:
+            data['postInstallScriptUri'] = post_uri
+
+        if ssh_keys:
+            data['sshKeys'] = [{'id': key_id} for key_id in ssh_keys]
+
+        return data
     
     def _wait_for_ready(self):
         if self._wait == 0:
@@ -439,7 +541,12 @@ class SoftlayerVirtualServer(object):
             sync_instance_config.datacenter != self._ic.datacenter or \
             sync_instance_config.os_code != self._ic.os_code or \
             sync_instance_config.payment_scheme != self._ic.payment_scheme or \
-            sync_instance_config.private != self._ic.private
+            sync_instance_config.private != self._ic.private or\
+            sync_instance_config.user_data != self._ic.user_data
+        # changing user data/metadata requires instance recreation because
+        # just calling Virtual_Guest::setUserMetadata updates the data in
+        # the Softlayer model but doesn't update it on the file syste i.e.
+        # on /dev/xvdha1/meta.js.          
             
         if changed:
             self.cancel()
@@ -455,7 +562,7 @@ class SoftlayerVirtualServer(object):
                                         cpus=self._ic.CPUs,
                                         memory=RAM.to_sl(self._ic.RAM))
         
-        nic_speed_chanaged = sync_instance_config.nic_speed != self._ic.nic_speed
+        nic_speed_changed = sync_instance_config.nic_speed != self._ic.nic_speed
         if nic_speed_changed:
            self._sl_vs_manager.change_port_speed(instance_id=self.get_vs_id(),
                                                  public=False,
@@ -469,12 +576,15 @@ class SoftlayerVirtualServer(object):
         return changed
     
     def _handleSettingsRequiringOsReload(self, sync_instance_config):
-        changed = sync_instance_config.post_install_script != self._ic.post_install_script or \
+        changed = sync_instance_config.post_install_script != self._ic.post_install_script\
+        or \
             not (set(sync_instance_config.root_ssh_keys).issubset(set(self._ic.root_ssh_keys)) and \
-             set(sync_instance_config.root_ssh_keys).issuperset(set(self._ic.root_ssh_keys)))
+            set(sync_instance_config.root_ssh_keys).issuperset(set(self._ic.root_ssh_keys)))\
+       
         if changed :
-            self._sl_vs_manager.reload_instance(self.get_vs_id(), self._ic.post_install_script,
-                self._ic.root_ssh_keys)
+            self._sl_vs_manager.reload_instance(instance_id=self.get_vs_id(),
+                                                post_uri=self._ic.post_install_script,
+                                                ssh_keys=self._ic.root_ssh_keys)
             self._wait_for_ready()
         return changed  
     
@@ -517,11 +627,25 @@ class SoftlayerVirtualServer(object):
         sl_data = self._sl_vs_manager.get_instance(self.get_vs_id())
         instance_config_in_sl = VSInstanceConfig(sl_get_instance=sl_data)
         instance_config_in_sl.root_ssh_keys = self._get_ssh_keys_in_sl(self.get_vs_id())
+        instance_config_in_sl.user_data = self._get_user_data(self.get_vs_id())
         return instance_config_in_sl  
     
     def _get_ssh_keys_in_sl(self, instance_id):
         label_ssh_key_map = self._sl_virtual_guest.getSshKeys(id=instance_id, mask="label")
         return map(lambda label_ssh_key_pair: label_ssh_key_pair["label"] , label_ssh_key_map)
+    
+    def _get_user_data(self, instance_id):
+        user_data = self._sl_virtual_guest.getUserData(id=instance_id);
+        if user_data is None:
+            return None
+        
+        for user_data_entry in user_data:
+            user_data_entry_type = user_data_entry["type"]
+            if user_data_entry_type is not None and\
+                user_data_entry_type["keyname"] == "USER_DATA" and\
+                user_data_entry_type["name"] == "User Data":
+                return user_data_entry["value"]
+        return None
     
     def _single_result(self, result_list):
         if len(result_list) == 0:

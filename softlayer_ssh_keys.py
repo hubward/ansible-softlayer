@@ -138,7 +138,7 @@ class SSHKeyException(Exception):
         return self._msg
    
 def main():
-    
+  
     module_helper = AnsibleModule(
         argument_spec = dict(
             SLClientConfig.arg_spec().items() + SshKeysConfig.arg_spec().items()
