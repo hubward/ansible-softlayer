@@ -84,7 +84,8 @@ options:
             - User provided data that will be accessible from the system. Could be used to
             - pass parameters to the post install script. Data is accessible by
             - mounting /dev/xvdh1. Path to raw data is openstack/latest/user_data.
-            - Ff changed, OS reload would be triggered
+            - If changed nothing will happen. This is basically used the first time
+            - a system is created to configure first-time users setup
         type: string
         default: null
     
@@ -281,8 +282,10 @@ class VSInstanceConfig(object):
             or ansible_config.get("user_data") is None:
             self.user_data = None
         else:
-            self.user_data = ansible_config.get("user_data")
+            self.user_data = ansible_config.get("user_data").replace("'", "\"")
         self.root_ssh_keys = ansible_config.get("root_ssh_keys")
+        if self.root_ssh_keys is None:
+            self.root_ssh_keys = []
         self.nic_speed = ansible_config.get("nic_speed")
         self.CPUs = ansible_config.get("CPUs")
         self.RAM = ansible_config.get("RAM")
@@ -299,7 +302,7 @@ class VSInstanceConfig(object):
         self.os_code = sl_data["operatingSystem"]["softwareLicense"]["softwareDescription"]["referenceCode"]
         self.private = sl_data.get("privateNetworkOnlyFlag", False)
         self.post_install_script = sl_data.get("post_uri", None)
-        self.root_ssh_keys = None
+        self.root_ssh_keys = []
         self.nic_speed = self._read_nic_speed_from_sl(sl_data)
         self.CPUs = sl_data["maxCpu"]
         self.RAM = RAM.from_sl_mb(sl_data["maxMemory"])
@@ -422,6 +425,9 @@ class SoftlayerVirtualServer(object):
             nic_speed = NICSpeed.to_sl(self._ic.nic_speed),
             user_data = self._ic.user_data
         )
+        print "create_params: ", create_params
+        with open('/home/hristo/data.txt', 'w') as outfile:
+            json.dump(create_params, outfile)
         self._sl_virtual_guest.createObject(create_params)
         self._wait_for_ready()
         
@@ -483,7 +489,15 @@ class SoftlayerVirtualServer(object):
                     "networkVlan": {"id": int(private_vlan)}}})
 
         if user_data:
-            data['userData'] = [{'value': user_data}]
+            data['userData'] = [
+                                {
+                                 'value': user_data,
+                                 'type': {
+                                          'keyname': 'USER_DATA',
+                                          'name': 'User Data'
+                                        }
+                                 }
+                               ]
 
         if nic_speed:
             data['networkComponents'] = [{'maxSpeed': nic_speed}]
@@ -541,8 +555,7 @@ class SoftlayerVirtualServer(object):
             sync_instance_config.datacenter != self._ic.datacenter or \
             sync_instance_config.os_code != self._ic.os_code or \
             sync_instance_config.payment_scheme != self._ic.payment_scheme or \
-            sync_instance_config.private != self._ic.private or\
-            sync_instance_config.user_data != self._ic.user_data
+            sync_instance_config.private != self._ic.private
         # changing user data/metadata requires instance recreation because
         # just calling Virtual_Guest::setUserMetadata updates the data in
         # the Softlayer model but doesn't update it on the file syste i.e.
@@ -627,6 +640,13 @@ class SoftlayerVirtualServer(object):
         sl_data = self._sl_vs_manager.get_instance(self.get_vs_id())
         instance_config_in_sl = VSInstanceConfig(sl_get_instance=sl_data)
         instance_config_in_sl.root_ssh_keys = self._get_ssh_keys_in_sl(self.get_vs_id())
+#       loaded but currently unused. Difference between metadata in VM and
+#       configuration will be ignored. This is because seting it via set_user_data metod
+#       sets the new metadata in Softlayer model but doesn't update it on the filesystem
+#       from where it is actually used by the scripts. Also to avoid very complicated
+#       scripts for updating the filesystem it would be best to restart the system.
+#       this would unfortunatelly lead to differences if later one changes the configuration
+#       in git so that new vms are created with different metadata, for example different users
         instance_config_in_sl.user_data = self._get_user_data(self.get_vs_id())
         return instance_config_in_sl  
     
