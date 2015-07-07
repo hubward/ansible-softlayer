@@ -45,19 +45,8 @@ import SoftLayer
 import sys
 import logging
 import time
+from softlayer_vs_basic.py import SLClientConfig
 
-    
-class SLClientConfig(object):
-    def __init__(self, params):
-        self.api_key= params.get("api_key")
-        self.sl_username = params.get("sl_username")
-    
-    @staticmethod
-    def arg_spec():
-        return dict(
-            api_key = dict(type = 'str'),
-            sl_username = dict(type = 'str'),
-        )
     
 class SshKeysConfig(object):
     def __init__(self, ansible_config):
@@ -146,7 +135,7 @@ def main():
     )
     
     sl_client_config = SLClientConfig(module_helper.params)
-    sl_client = SoftLayer.Client(sl_client_config.sl_username, sl_client_config.api_key)
+    sl_client = SoftLayer.Client(username=sl_client_config.sl_username, api_key=sl_client_config.api_key)
 
     try:
         ssh_keys = SshKeys(sl_client, SshKeysConfig(ansible_config=module_helper.params))
