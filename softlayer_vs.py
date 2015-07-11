@@ -262,12 +262,12 @@ class VSInstanceConfig(VSInstanceConfigBasic):
             or ansible_config.get("user_data") is None:
             self.user_data = None
         else:
-            self.user_data = ansible_config.get("user_data").replace("'", "\"")
+            self.user_data = ansible_config.get("user_data")
         self.root_ssh_keys = ansible_config.get("root_ssh_keys")
         if self.root_ssh_keys is None:
             self.root_ssh_keys = []
         self.nic_speed = ansible_config.get("nic_speed")
-        self.CPUs = int(ansible_config.get("CPUs"))
+        self.CPUs = int(ansible_config.get("CPUs", 0))
         self.RAM = ansible_config.get("RAM")
         
     def __from_sl(self, sl_data):
@@ -348,9 +348,9 @@ class SoftlayerVirtualServer(SoftlayerVirtualServerBasic):
         sync_instance_config = self.__get_vs_instance_config_in_sl()
         actionPerformed = self.__handleState(sync_instance_config, change_log)
         if actionPerformed == self._create or actionPerformed == self._cancel:
-            return self.__result(True, actionPeformed)
+            return self.__result(True, actionPerformed)
         if actionPerformed == self._nothing and self.ic.state == VSState.ABSENT():
-            return self.__result(True, actionPeformed)
+            return self.__result(True, actionPerformed)
         changed = actionPerformed != self._nothing   
         changed |= self.__handleSettingsRequiringInstanceRecreation(sync_instance_config, change_log)
         if changed:
